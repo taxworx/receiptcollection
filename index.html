@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ReceiptSync Unified System</title>
+    <title>ReceiptSync Offline</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- React & Babel CDNs -->
@@ -44,19 +44,8 @@
 <body class="bg-[#f8fafc]">
     <div id="root"></div>
 
-    <script type="text/babel" data-type="module">
-        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
-        import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js';
-        import { getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, writeBatch } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
-
+    <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
-
-        // --- Firebase Configuration ---
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'receipt-monitor-1000';
 
         // --- Constants ---
         const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4'];
@@ -67,12 +56,12 @@
 
         const getAgentPrefix = (name) => name ? name.substring(0, 3).toUpperCase() : 'UNK';
 
-        // --- Safe Icon Component (Using SVGs to avoid React DOM conflict) ---
+        // --- Safe Icon Component (Using SVGs) ---
         const Icon = ({ name, size = 20, className = "" }) => {
             const icons = {
                 'activity': <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
                 'layout-dashboard': <rect width="7" height="9" x="3" y="3" rx="1" /><rect width="7" height="5" x="14" y="3" rx="1" /><rect width="7" height="9" x="14" y="12" rx="1" /><rect width="7" height="5" x="3" y="16" rx="1" />,
-                'line-chart': <path d="m19 8-6 6-3-3-4 4" /><path d="M22 12h-4l-3 9L9 3l-3 9H2" />, // simplified
+                'line-chart': <path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" />,
                 'file-text': <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><line x1="10" y1="9" x2="8" y2="9" />,
                 'landmark': <line x1="3" y1="22" x2="21" y2="22" /><line x1="6" y1="18" x2="6" y2="11" /><line x1="10" y1="18" x2="10" y2="11" /><line x1="14" y1="18" x2="14" y2="11" /><line x1="18" y1="18" x2="18" y2="11" /><polygon points="12 2 20 7 4 7" />,
                 'settings': <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" />,
@@ -118,10 +107,17 @@
         };
 
         const App = () => {
-            const [user, setUser] = useState(null);
-            const [clients, setClients] = useState([]);
-            const [agents, setAgents] = useState(DEFAULT_AGENTS);
-            const [loading, setLoading] = useState(true);
+            // --- State Initialization from localStorage ---
+            const [clients, setClients] = useState(() => {
+                const saved = localStorage.getItem('receiptsync_clients');
+                return saved ? JSON.parse(saved) : [];
+            });
+            const [agents, setAgents] = useState(() => {
+                const saved = localStorage.getItem('receiptsync_agents');
+                return saved ? JSON.parse(saved) : DEFAULT_AGENTS;
+            });
+            
+            const [loading, setLoading] = useState(false);
             const [activeTab, setActiveTab] = useState('dashboard'); 
             const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
             const [searchTerm, setSearchTerm] = useState('');
@@ -139,38 +135,14 @@
 
             const clientsPerPage = 100;
 
+            // Persist to localStorage whenever state changes
             useEffect(() => {
-                const initAuth = async () => {
-                    try {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
-                    } catch (e) { console.error(e); }
-                };
-                initAuth();
-                return onAuthStateChanged(auth, setUser);
-            }, []);
+                localStorage.setItem('receiptsync_clients', JSON.stringify(clients));
+            }, [clients]);
 
             useEffect(() => {
-                if (!user) return;
-                const clientsCol = collection(db, 'artifacts', appId, 'public', 'data', 'clients');
-                const unsubClients = onSnapshot(clientsCol, (snapshot) => {
-                    const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-                    setClients(list);
-                    setLoading(false);
-                });
-
-                const settingsDoc = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'agentList');
-                const unsubAgents = onSnapshot(settingsDoc, (snapshot) => {
-                    if (snapshot.exists()) setAgents(snapshot.data().list || DEFAULT_AGENTS);
-                    else setDoc(settingsDoc, { list: DEFAULT_AGENTS });
-                });
-
-                return () => { unsubClients(); unsubAgents(); };
-            }, [user]);
+                localStorage.setItem('receiptsync_agents', JSON.stringify(agents));
+            }, [agents]);
 
             useEffect(() => {
                 if (agents.length > 0 && !newClient.agentName) {
@@ -178,6 +150,7 @@
                 }
             }, [agents]);
 
+            // Intelligence Logic
             const stats = useMemo(() => {
                 const data = { 
                     total: clients.length, complete: 0, notComplete: 0, 
@@ -239,26 +212,57 @@
                 return data;
             }, [clients, selectedYear, agents]);
 
-            const updateAgentsList = async (newList) => {
-                const settingsDoc = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'agentList');
-                await setDoc(settingsDoc, { list: newList });
+            // --- Handlers ---
+            const updateAgentsList = (newList) => setAgents(newList);
+
+            const toggleStatus = (clientId, qKey, current, type = 'receipts') => {
+                const next = current === 'pending' ? 'submitted' : (current === 'submitted' ? 'overdue' : 'pending');
+                setClients(prev => prev.map(c => {
+                    if (c.id !== clientId) return c;
+                    const subField = type === 'receipts' ? 'submissions' : 'bankSubmissions';
+                    const prefix = type === 'receipts' ? 'submission' : 'bank';
+                    
+                    const updatedSubmissions = { ...c[subField], [qKey]: next };
+                    const updatedDates = { ...c[`${prefix}Dates`] };
+                    const updatedStaff = { ...c[`${prefix}Staff`] };
+                    const updatedBox = { ...c[`${prefix}BoxRefs`] };
+                    
+                    if (next === 'submitted') {
+                        updatedDates[qKey] = new Date().toISOString();
+                        updatedStaff[qKey] = 'System';
+                        updatedBox[qKey] = type === 'receipts' ? 'PENDING' : 'BANK-REF';
+                    }
+
+                    const update = { ...c, [subField]: updatedSubmissions, [`${prefix}Dates`]: updatedDates, [`${prefix}Staff`]: updatedStaff, [`${prefix}BoxRefs`]: updatedBox };
+                    
+                    if (type === 'receipts') {
+                        update.submissionWeights = { ...c.submissionWeights, [qKey]: next === 'submitted' ? '0.10kg' : c.submissionWeights?.[qKey] };
+                        update.submissionSizes = { ...c.submissionSizes, [qKey]: next === 'submitted' ? 'Medium' : c.submissionSizes?.[qKey] };
+                    }
+                    return update;
+                }));
             };
 
-            const toggleStatus = async (clientId, qKey, current, type = 'receipts') => {
-                const next = current === 'pending' ? 'submitted' : (current === 'submitted' ? 'overdue' : 'pending');
-                const prefix = type === 'receipts' ? 'submission' : 'bank';
-                const subField = type === 'receipts' ? 'submissions' : 'bankSubmissions';
-                const update = { [`${subField}.${qKey}`]: next };
-                if (next === 'submitted') {
-                    update[`${prefix}Dates.${qKey}`] = new Date().toISOString();
-                    update[`${prefix}Staff.${qKey}`] = 'System';
-                    update[`${prefix}BoxRefs.${qKey}`] = type === 'receipts' ? 'PENDING' : 'BANK-REF';
+            const onboardClient = () => {
+                const newId = Date.now().toString();
+                setClients([{ ...newClient, id: newId, submissions: {}, bankSubmissions: {}, createdAt: new Date().toISOString() }, ...clients]);
+                setIsModalOpen(false);
+            };
+
+            const updateSubmissionMetadata = (clientId, qKey, type, data) => {
+                setClients(prev => prev.map(c => {
+                    if (c.id !== clientId) return c;
+                    const prefix = type === 'receipts' ? 'submission' : 'bank';
+                    const update = { ...c };
+                    update[`${prefix}Staff`] = { ...c[`${prefix}Staff`], [qKey]: data.staff };
+                    update[`${prefix}BoxRefs`] = { ...c[`${prefix}BoxRefs`], [qKey]: data.box };
                     if (type === 'receipts') {
-                        update[`submissionWeights.${qKey}`] = '0.10kg';
-                        update[`submissionSizes.${qKey}`] = 'Medium';
+                        update.submissionWeights = { ...c.submissionWeights, [qKey]: data.weight };
+                        update.submissionSizes = { ...c.submissionSizes, [qKey]: data.size };
                     }
-                }
-                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'clients', clientId), update);
+                    return update;
+                }));
+                setEditingSubmission(null);
             };
 
             const handleExport = (format) => {
@@ -284,8 +288,6 @@
             const displayedClientsList = filteredClientsList.slice((currentPage - 1) * clientsPerPage, currentPage * clientsPerPage);
             const formatTimestamp = (iso) => iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
 
-            if (loading) return <div className="h-screen flex items-center justify-center"><Icon name="loader-2" className="animate-spin text-blue-600" size={32}/></div>;
-
             return (
                 <div className="flex h-screen overflow-hidden bg-[#f8fafc] text-slate-900">
                     <aside className="no-print w-64 bg-white border-r border-slate-200 flex flex-col shrink-0 shadow-sm z-50">
@@ -305,6 +307,7 @@
                             <div className="px-4 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">Setup</div>
                             <button onClick={() => setActiveTab('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-sm transition-all ${activeTab === 'settings' ? 'bg-blue-50 text-blue-600 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}><Icon name="settings" size={18}/> Organization</button>
                         </nav>
+                        <div className="p-4 bg-slate-50 text-[9px] font-bold text-slate-400 text-center uppercase tracking-widest">Local Mode (No Cloud)</div>
                     </aside>
 
                     <main className="flex-1 flex flex-col overflow-hidden">
@@ -374,7 +377,7 @@
                                                         <div><h4 className="font-black text-lg text-slate-800">{agent}</h4><p className="text-[9px] font-bold uppercase text-slate-400">{data.total} Managed</p></div>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-3 mb-6">
-                                                        <div className="bg-slate-50 p-4 rounded-2xl text-center"><p className="text-xl font-black">{data.total}</p><p className="text-[8px] font-bold text-slate-400 uppercase">Total</p></div>
+                                                        <div className="bg-slate-50 p-4 rounded-2xl text-center"><p className="text-xl font-black text-slate-800">{data.total}</p><p className="text-[8px] font-bold text-slate-400 uppercase">Total</p></div>
                                                         <div className="bg-green-50 p-4 rounded-2xl text-center"><p className="text-xl font-black text-green-600">{data.complete}</p><p className="text-[8px] font-bold text-green-500 uppercase">Rec</p></div>
                                                         <div className="bg-rose-50 p-4 rounded-2xl text-center"><p className="text-xl font-black text-rose-600">{data.notComplete}</p><p className="text-[8px] font-bold text-rose-500 uppercase">Unrec</p></div>
                                                     </div>
@@ -511,7 +514,7 @@
                                 <div className="space-y-6">
                                     <div className="grid grid-cols-2 gap-4"><input type="text" className="w-full px-5 py-4 rounded-2xl bg-slate-50 font-black border-none focus:ring-4 focus:ring-blue-500/10 text-slate-800" placeholder="Staff" value={editingSubmission.data.staff || ''} onChange={e => setEditingSubmission({ ...editingSubmission, data: { ...editingSubmission.data, staff: e.target.value } })} /><input type="text" className="w-full px-5 py-4 rounded-2xl bg-slate-50 font-black border-none focus:ring-4 focus:ring-blue-500/10 text-slate-800" placeholder="Box Ref" value={editingSubmission.data.box || ''} onChange={e => setEditingSubmission({ ...editingSubmission, data: { ...editingSubmission.data, box: e.target.value } })} /></div>
                                     {editingSubmission.type === 'receipts' && (<><div className="grid grid-cols-2 gap-2">{SIZES.map(s => (<button key={s} onClick={() => setEditingSubmission({ ...editingSubmission, data: { ...editingSubmission.data, size: s } })} className={`py-2 rounded-xl text-[10px] font-black uppercase transition-all border ${editingSubmission.data.size === s ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-500'}`}>{s}</button>))}</div><input type="text" className="w-full px-5 py-4 rounded-2xl bg-slate-50 font-black border-none focus:ring-4 focus:ring-blue-500/10 text-slate-800" placeholder="Weight (kg)" value={editingSubmission.data.weight || ''} onChange={e => setEditingSubmission({ ...editingSubmission, data: { ...editingSubmission.data, weight: e.target.value } })} /></>)}
-                                    <button onClick={async () => { const { clientId, qKey, data, type } = editingSubmission; const prefix = type === 'receipts' ? 'submission' : 'bank'; const update = { [`${prefix}Staff.${qKey}`]: data.staff, [`${prefix}BoxRefs.${qKey}`]: data.box }; if (type === 'receipts') { update[`submissionWeights.${qKey}`] = data.weight; update[`submissionSizes.${qKey}`] = data.size; } await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'clients', clientId), update); setEditingSubmission(null); }} className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black shadow-2xl hover:bg-black transition-all flex items-center justify-center gap-2 uppercase tracking-widest text-xs"><Icon name="save" size={20}/> Commit Update</button>
+                                    <button onClick={() => updateSubmissionMetadata(editingSubmission.clientId, editingSubmission.qKey, editingSubmission.type, editingSubmission.data)} className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black shadow-2xl hover:bg-black transition-all flex items-center justify-center gap-2 uppercase tracking-widest text-xs"><Icon name="save" size={20}/> Commit Update</button>
                                     <button onClick={() => setEditingSubmission(null)} className="w-full py-4 text-slate-400 font-bold uppercase tracking-widest text-[10px]">Discard</button>
                                 </div>
                             </div>
@@ -529,7 +532,7 @@
                                     <div className="col-span-2 space-y-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Fiscal Years Allocation</label><div className="flex flex-wrap gap-2 px-4">{AVAILABLE_YEARS.map(y => (<button key={y} onClick={() => { const years = newClient.onboardYears.includes(y) ? newClient.onboardYears.filter(year => year !== y) : [...newClient.onboardYears, y]; setNewClient({...newClient, onboardYears: years}); }} className={`px-4 py-2 rounded-xl text-xs font-black transition-all border ${newClient.onboardYears.includes(y) ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-slate-400 border-slate-100 hover:border-slate-300'}`}>{y}</button>))}</div></div>
                                     <div className="col-span-2 flex items-center gap-3 bg-slate-50 p-5 rounded-[2rem]"><input type="checkbox" id="bank-toggle" className="w-6 h-6 rounded border-slate-300" checked={newClient.hasBankStatements} onChange={e => setNewClient({...newClient, hasBankStatements: e.target.checked})} /><label htmlFor="bank-toggle" className="text-xs font-black text-slate-600 uppercase tracking-widest cursor-pointer text-slate-600">Require Bank Statements (Jan-Dec)</label></div>
                                 </div>
-                                <div className="flex gap-4 mt-10"><button onClick={() => setIsModalOpen(false)} className="flex-1 py-6 rounded-[2rem] font-black text-slate-400 hover:bg-slate-100 transition-colors uppercase text-xs">Discard</button><button onClick={async () => { const clientRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'clients')); await setDoc(clientRef, { ...newClient, submissions: {}, bankSubmissions: {}, createdAt: new Date().toISOString() }); setIsModalOpen(false); }} className="flex-[2] py-6 bg-slate-900 text-white rounded-[2rem] font-black shadow-xl active:scale-95 transition-all uppercase text-xs tracking-widest">Provision Registry</button></div>
+                                <div className="flex gap-4 mt-10"><button onClick={() => setIsModalOpen(false)} className="flex-1 py-6 rounded-[2rem] font-black text-slate-400 hover:bg-slate-100 transition-colors uppercase text-xs">Discard</button><button onClick={onboardClient} className="flex-[2] py-6 bg-slate-900 text-white rounded-[2rem] font-black shadow-xl active:scale-95 transition-all uppercase text-xs tracking-widest">Provision Registry</button></div>
                             </div>
                         </div>
                     )}
